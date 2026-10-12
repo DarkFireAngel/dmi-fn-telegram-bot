@@ -1,0 +1,28 @@
+# Environment variables & secrets (CRITICAL: DO NOT COMMIT)
+.env
+*.env
+*.env.local
+
+# Database
+dmi_bot.db
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# Python cache & bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db

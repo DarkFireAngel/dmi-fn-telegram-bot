@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  dmi-bot:
+    build: .
+    container_name: dmi_fn_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DB_PATH=/app/data/dmi_bot.db
