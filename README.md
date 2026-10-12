@@ -1,7 +1,7 @@
 # 🤖 DMI UniCT (L-31 Informatica) - Bot Avvisi Canale F-N
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/new?template=https%3A%2F%2Fgithub.com%2FDarkFireAngel%2Fdmi-fn-telegram-bot)
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/DarkFireAngel/dmi-fn-telegram-bot)
+
 
 Un bot Telegram intelligente progettato per monitorare in tempo reale il portale ufficiale del **Dipartimento di Matematica e Informatica (DMI) dell'Università di Catania** per il Corso di Laurea in Informatica (L-31):
 🌐 [https://web.dmi.unict.it/corsi/l-31](https://web.dmi.unict.it/corsi/l-31)
