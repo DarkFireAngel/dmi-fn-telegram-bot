@@ -120,5 +120,41 @@ class TestDmiBot(unittest.TestCase):
             self.assertIn("reason", n)
 
 
+    def test_database_avvisi_messages_tracking(self):
+        chat_id = 999888
+        database.save_avvisi_message(chat_id, 101, self.db_path)
+        database.save_avvisi_message(chat_id, 102, self.db_path)
+        database.save_avvisi_message(chat_id, 103, self.db_path)
+
+        popped = database.pop_avvisi_messages(chat_id, self.db_path)
+        self.assertEqual(popped, [101, 102, 103])
+
+        # Second pop should be empty
+        popped_again = database.pop_avvisi_messages(chat_id, self.db_path)
+        self.assertEqual(popped_again, [])
+
+    def test_database_count_active_users(self):
+        self.assertEqual(database.count_active_users(self.db_path), 0)
+        database.register_user(1, "u1", "User 1", self.db_path)
+        database.register_user(2, "u2", "User 2", self.db_path)
+        self.assertEqual(database.count_active_users(self.db_path), 2)
+        database.set_user_active(1, False, self.db_path)
+        self.assertEqual(database.count_active_users(self.db_path), 1)
+
+    def test_schedule_fn_generation(self):
+        import schedule_fn
+        import datetime
+        # Test Monday 10:00 AM (during Programmazione I)
+        test_time = datetime.datetime(2026, 10, 12, 10, 0)
+        msg = schedule_fn.get_orario_message(test_time)
+        self.assertIn("Programmazione I", msg)
+        self.assertIn("Orario Canale F-N", msg)
+
+        # Test Sunday (weekend)
+        test_sunday = datetime.datetime(2026, 10, 18, 12, 0)
+        msg_weekend = schedule_fn.get_orario_message(test_sunday)
+        self.assertIn("weekend", msg_weekend.lower())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,13 +1,17 @@
 """
 Main Telegram Bot module for DMI(F-N) infobot.
-Provides commands:
-- /start: Register user, welcome message, send latest notices
-- /avvisi: Fetch and display recent F-N notices
-- /docenti: List professors of Canale F-N
-- /impostazioni: Toggle general CdS notices and preferences
-- /check: Manually trigger check for new notices
-- /stop: Unsubscribe from automatic alerts
-- /help: Detailed help and bot info
+Comandi disponibili:
+- /start       : Registra utente, messaggio di benvenuto (senza spam avvisi)
+- /avvisi      : Pulisce la chat e mostra avvisi aggiornati Canale F-N
+- /orario      : Orario lezioni F-N con commenti dinamici basati sull'ora
+- /docenti     : Lista docenti Canale F-N
+- /impostazioni: Toggle avvisi generali CdS
+- /check       : Controllo manuale nuovi avvisi
+- /stop        : Disiscriviti dalle notifiche automatiche
+- /help        : Guida comandi
+Admin only:
+- /broadcast <testo> : Invia messaggio a tutti gli iscritti
+- /iscritti          : Numero di utenti attivi
 """
 
 import logging
@@ -24,7 +28,7 @@ if sys.platform == "win32":
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode, ChatType
-
+from telegram.error import Forbidden, BadRequest
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -37,6 +41,7 @@ import config
 import database
 import scraper
 import notifier
+import schedule_fn
 
 # Configure logging
 logging.basicConfig(
@@ -46,17 +51,30 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# ─────────────────────────────────────────────
+#  KEYBOARDS
+# ─────────────────────────────────────────────
+
 def get_main_keyboard() -> InlineKeyboardMarkup:
     """Returns the main inline navigation keyboard."""
     keyboard = [
         [
-            InlineKeyboardButton("📢 Ultimi Avvisi", callback_data="btn_avvisi"),
-            InlineKeyboardButton("👨‍🏫 Docenti F-N", callback_data="btn_docenti")
+            InlineKeyboardButton("📢 Avvisi F-N", callback_data="btn_avvisi"),
+            InlineKeyboardButton("📅 Orario", callback_data="btn_orario"),
         ],
         [
+            InlineKeyboardButton("👨‍🏫 Docenti F-N", callback_data="btn_docenti"),
             InlineKeyboardButton("⚙️ Impostazioni", callback_data="btn_settings"),
-            InlineKeyboardButton("❓ Aiuto", callback_data="btn_help")
-        ]
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def get_avvisi_keyboard() -> InlineKeyboardMarkup:
+    """Returns keyboard shown below avvisi with a refresh button."""
+    keyboard = [
+        [InlineKeyboardButton("🔄 Aggiorna Avvisi", callback_data="btn_avvisi_refresh")],
+        [InlineKeyboardButton("« Menu principale", callback_data="btn_menu")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -66,25 +84,123 @@ def get_settings_keyboard(include_cds: bool) -> InlineKeyboardMarkup:
     cds_label = "✅ Avvisi CdS L-31: ATTIVI" if include_cds else "❌ Avvisi CdS L-31: DISATTIVATI"
     keyboard = [
         [InlineKeyboardButton(cds_label, callback_data="toggle_cds")],
-        [InlineKeyboardButton("🔄 Aggiorna Avvisi Adesso", callback_data="btn_avvisi")],
-        [InlineKeyboardButton("« Torna al Menu", callback_data="btn_menu")]
+        [InlineKeyboardButton("« Torna al Menu", callback_data="btn_menu")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
 
+# ─────────────────────────────────────────────
+#  HELPERS
+# ─────────────────────────────────────────────
+
+def is_admin(chat_id: int) -> bool:
+    """Returns True if the user is the configured admin."""
+    if hasattr(config, "ADMIN_CHAT_IDS") and chat_id in config.ADMIN_CHAT_IDS:
+        return True
+    return config.ADMIN_CHAT_ID is not None and chat_id == config.ADMIN_CHAT_ID
+
+
+async def delete_old_avvisi(bot, chat_id: int) -> None:
+    """Deletes all previously tracked avvisi messages for a user."""
+    msg_ids = database.pop_avvisi_messages(chat_id, config.DB_PATH)
+    for mid in msg_ids:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=mid)
+        except Exception:
+            pass  # Message may be too old or already deleted
+
+
+async def send_and_track(update_or_message, chat_id: int, text: str, **kwargs):
+    """Sends a message and tracks its ID for later deletion."""
+    if hasattr(update_or_message, "reply_text"):
+        msg = await update_or_message.reply_text(text, **kwargs)
+    else:
+        msg = await update_or_message.reply_text(text, **kwargs)
+    database.save_avvisi_message(chat_id, msg.message_id, config.DB_PATH)
+    return msg
+
+
+async def show_avvisi(bot, chat_id: int, include_cds: bool, reply_target=None):
+    """
+    Core avvisi logic. Deletes old avvisi messages, fetches fresh ones, sends them.
+    reply_target: a Message object to reply to (for /avvisi command), or None.
+    """
+    # 1. Delete old avvisi messages
+    await delete_old_avvisi(bot, chat_id)
+
+    # 2. Send temporary loading message
+    if reply_target:
+        loading_msg = await reply_target.reply_text("🔍 Aggiorno gli avvisi dal sito DMI...")
+    else:
+        loading_msg = await bot.send_message(chat_id=chat_id, text="🔍 Aggiorno gli avvisi dal sito DMI...")
+
+    try:
+        notices = scraper.fetch_all_fn_notices(max_pages=3, include_cds_general=include_cds)
+    except Exception as e:
+        logger.error(f"Errore fetch avvisi: {e}")
+        try:
+            await loading_msg.edit_text("❌ Errore durante il recupero degli avvisi. Riprova tra poco.")
+        except Exception:
+            pass
+        return
+    finally:
+        try:
+            await loading_msg.delete()
+        except Exception:
+            pass
+
+    if not notices:
+        msg = await bot.send_message(
+            chat_id=chat_id,
+            text="📭 Nessun avviso recente trovato per il Canale F-N.",
+            reply_markup=get_avvisi_keyboard()
+        )
+        database.save_avvisi_message(chat_id, msg.message_id, config.DB_PATH)
+        return
+
+    # 3. Header message
+    header_msg = await bot.send_message(
+        chat_id=chat_id,
+        text=f"📢 <b>{len(notices[:5])} avvisi recenti — Canale F-N:</b>",
+        parse_mode=ParseMode.HTML
+    )
+    database.save_avvisi_message(chat_id, header_msg.message_id, config.DB_PATH)
+
+    # 4. Each notice
+    for n in notices[:5]:
+        text = notifier.format_notice_message(n, is_alert=False)
+        m = await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True
+        )
+        database.save_avvisi_message(chat_id, m.message_id, config.DB_PATH)
+
+    # 5. Footer with refresh button
+    footer_msg = await bot.send_message(
+        chat_id=chat_id,
+        text="↩️ Usa il pulsante per aggiornare o tornare al menu:",
+        reply_markup=get_avvisi_keyboard()
+    )
+    database.save_avvisi_message(chat_id, footer_msg.message_id, config.DB_PATH)
+
+
+# ─────────────────────────────────────────────
+#  COMMAND HANDLERS
+# ─────────────────────────────────────────────
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles /start command. Registers user and sends welcome info."""
+    """Handles /start. Registers user and shows welcome (no avvisi spam)."""
     user = update.effective_user
     chat = update.effective_chat
 
     if chat.type != ChatType.PRIVATE:
         await update.message.reply_text(
-            "⚠️ Per favore, avvia il bot in una chat privata per ricevere gli avvisi personali!\n"
-            "Clicca qui per avviarmi: @DMI_FN_Infobot (o il tuo bot)"
+            "⚠️ Avviami in chat privata per ricevere gli avvisi personali!"
         )
         return
 
-    # Register user in DB
     is_new = database.register_user(
         chat_id=chat.id,
         username=user.username,
@@ -92,18 +208,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         db_path=config.DB_PATH
     )
 
-    status_txt = "ti sei registrato con successo" if is_new else "il tuo abbonamento è attivo"
+    if is_new:
+        status_txt = "🎉 Ti sei registrato con successo!"
+    else:
+        status_txt = "✅ Il tuo abbonamento è già attivo."
 
     welcome_text = (
-        f"👋 <b>Ciao {notifier.escape_html(user.first_name)}! Benvenuto nel Bot Avvisi DMI (Canale F-N)</b> 🎓\n\n"
-        f"Da adesso {status_txt} per ricevere <b>in privato</b> tutti gli avvisi pubblicati sul sito del "
-        f"<b>DMI UniCT</b> (Corso di Laurea in Informatica L-31):\n"
+        f"👋 <b>Ciao {notifier.escape_html(user.first_name)}!</b>\n\n"
+        f"{status_txt}\n\n"
+        f"Riceverai in automatico tutti gli <b>avvisi del Canale F-N</b> "
+        f"del CdL Informatica L-31 (DMI UniCT) appena vengono pubblicati.\n\n"
         f"🌐 <a href=\"https://web.dmi.unict.it/corsi/l-31\">web.dmi.unict.it/corsi/l-31</a>\n\n"
-        f"📌 <b>Cosa riceverai automaticamente:</b>\n"
-        f"• Tutti gli avvisi dei docenti del <b>Canale F-N</b>\n"
-        f"• Avvisi con riferimenti diretti al <b>Canale F-N</b>\n"
-        f"• Notifiche in tempo reale appena pubblicate sul sito DMI\n\n"
-        f"Usa i pulsanti qui sotto o scrivi <code>/avvisi</code> per consultare gli avvisi recenti!"
+        f"Scegli un'opzione qui sotto:"
     )
 
     await update.message.reply_text(
@@ -113,73 +229,48 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         disable_web_page_preview=True
     )
 
-    # Immediately show the 2 latest notices so user sees it in action
-    try:
-        user_data = database.get_user(chat.id, config.DB_PATH)
-        include_cds = bool(user_data.get("include_cds", 0)) if user_data else False
-        recent_notices = scraper.fetch_all_fn_notices(max_pages=2, include_cds_general=include_cds)
-        if recent_notices:
-            await update.message.reply_text(
-                "📋 <b>Ecco gli ultimi avvisi rilevati per il Canale F-N:</b>",
-                parse_mode=ParseMode.HTML
-            )
-            for n in recent_notices[:2]:
-                msg = notifier.format_notice_message(n, is_alert=False)
-                await update.message.reply_text(
-                    msg,
-                    parse_mode=ParseMode.HTML,
-                    disable_web_page_preview=True
-                )
-    except Exception as e:
-        logger.error(f"Errore nel recupero avvisi di benvenuto: {e}")
-
 
 async def avvisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles /avvisi command. Shows recent notices for Canale F-N."""
+    """Handles /avvisi. Cleans chat and shows fresh F-N notices."""
     chat_id = update.effective_chat.id
+    user_data = database.get_user(chat_id, config.DB_PATH)
+    include_cds = bool(user_data.get("include_cds", 0)) if user_data else False
 
-    wait_msg = await update.message.reply_text("🔍 Controllo gli ultimi avvisi sul sito DMI...")
-
+    # Delete the user's /avvisi command message too for a cleaner chat
     try:
-        user_data = database.get_user(chat_id, config.DB_PATH)
-        include_cds = bool(user_data.get("include_cds", 0)) if user_data else False
+        await update.message.delete()
+    except Exception:
+        pass
 
-        notices = scraper.fetch_all_fn_notices(max_pages=3, include_cds_general=include_cds)
+    await show_avvisi(
+        bot=context.bot,
+        chat_id=chat_id,
+        include_cds=include_cds,
+        reply_target=None
+    )
 
-        await wait_msg.delete()
 
-        if not notices:
-            await update.message.reply_text(
-                "📭 Al momento non ci sono avvisi recenti per il Canale F-N.",
-                reply_markup=get_main_keyboard()
-            )
-            return
-
-        await update.message.reply_text(
-            f"📢 <b>Trovati {len(notices[:5])} avvisi recenti per il Canale F-N:</b>",
-            parse_mode=ParseMode.HTML
-        )
-
-        for n in notices[:5]:
-            msg = notifier.format_notice_message(n, is_alert=False)
-            await update.message.reply_text(
-                msg,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True
-            )
-
-    except Exception as e:
-        logger.error(f"Errore in /avvisi: {e}")
-        await wait_msg.edit_text(f"❌ Si è verificato un errore durante il recupero degli avvisi: {e}")
+async def orario_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /orario. Shows F-N timetable with smart time-based comment."""
+    msg = schedule_fn.get_orario_message()
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Aggiorna orario", callback_data="btn_orario")],
+        [InlineKeyboardButton("« Menu principale", callback_data="btn_menu")],
+    ])
+    await update.message.reply_text(
+        msg,
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard
+    )
 
 
 async def docenti_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles /docenti command. Lists all professors associated with Canale F-N."""
+    """Handles /docenti. Lists all F-N professors."""
     profs = scraper.get_fn_professors()
 
     text = (
-        "👨‍🏫 <b>Docenti e Insegnamenti del Canale F-N (L-31 Informatica):</b>\n\n"
-        "Gli avvisi pubblicati da questi docenti vengono monitorati automaticamente:\n\n"
+        "👨‍🏫 <b>Docenti Canale F-N — L-31 Informatica:</b>\n\n"
+        "Avvisi di questi docenti vengono monitorati automaticamente:\n\n"
     )
 
     for name, data in profs.items():
@@ -193,7 +284,7 @@ async def docenti_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             text += f"🔹 <b>Prof. {clean_name}</b>\n{notifier.escape_html(courses_str)}\n\n"
 
     text += (
-        "💡 <i>La lista viene aggiornata periodicamente in base alla pagina ufficiale:</i>\n"
+        "💡 <i>Lista aggiornata da:</i>\n"
         "🔗 <a href=\"https://web.dmi.unict.it/corsi/l-31/docenti\">Docenti CdL Informatica L-31</a>"
     )
 
@@ -206,18 +297,18 @@ async def docenti_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def impostazioni_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles /impostazioni command."""
+    """Handles /impostazioni."""
     chat_id = update.effective_chat.id
     user_data = database.get_user(chat_id, config.DB_PATH)
     include_cds = bool(user_data.get("include_cds", 0)) if user_data else False
 
-    cds_desc = "Attiva (ricevi anche gli avvisi generali del CdS L-31)" if include_cds else "Disattivata (solo avvisi inerenti a docenti e canale F-N)"
+    cds_desc = "🟢 ATTIVI" if include_cds else "🔴 DISATTIVATI"
 
     text = (
         "⚙️ <b>Impostazioni Notifiche:</b>\n\n"
         "🟢 <b>Avvisi Docenti Canale F-N:</b> SEMPRE ATTIVI\n"
         f"🔵 <b>Avvisi Generali CdS L-31:</b> {cds_desc}\n\n"
-        "Premi il pulsante qui sotto per attivare o disattivare la ricezione degli avvisi generali del Corso di Studi (es. orari, appelli riservati, test d'ingresso):"
+        "Con gli avvisi CdS attivi ricevi anche: orari, appelli riservati, test d'ingresso, ecc."
     )
 
     await update.message.reply_text(
@@ -228,44 +319,41 @@ async def impostazioni_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles /check command. Forces an immediate check for new notices."""
+    """Handles /check. Forces an immediate check for new notices."""
     msg = await update.message.reply_text("🔄 Controllo manuale avvisi in corso...")
     count = await notifier.check_and_notify(context.application)
     if count == 0:
-        await msg.edit_text("✅ Controllo completato! Nessun nuovo avviso da notificare.")
+        await msg.edit_text("✅ Nessun nuovo avviso trovato.")
     else:
-        await msg.edit_text(f"✅ Controllo completato! Trovati e inviati {count} nuovi avvisi.")
+        await msg.edit_text(f"✅ Trovati e inviati <b>{count}</b> nuovi avvisi!", parse_mode=ParseMode.HTML)
 
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles /stop command. Unsubscribes user from automatic alerts."""
+    """Handles /stop. Unsubscribes user from automatic alerts."""
     chat_id = update.effective_chat.id
     database.set_user_active(chat_id, False, config.DB_PATH)
 
     await update.message.reply_text(
-        "🛑 <b>Hai disattivato le notifiche automatiche.</b>\n\n"
-        "Non riceverai più messaggi per i nuovi avvisi.\n"
-        "Per riattivare il servizio in qualunque momento, invia semplicemente <code>/start</code>.",
+        "🛑 <b>Notifiche automatiche disattivate.</b>\n\n"
+        "Non riceverai più avvisi automatici.\n"
+        "Per riattivare scrivi <code>/start</code> in qualsiasi momento.",
         parse_mode=ParseMode.HTML
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles /help command."""
+    """Handles /help."""
     help_text = (
-        "ℹ️ <b>Guida ai comandi del Bot Avvisi DMI (Canale F-N):</b>\n\n"
-        "• <code>/start</code> - Avvia o riattiva il bot e mostra le opzioni principali\n"
-        "• <code>/avvisi</code> - Visualizza gli ultimi 5 avvisi rilevati per il Canale F-N\n"
-        "• <code>/docenti</code> - Mostra la lista dei docenti e corsi del Canale F-N\n"
-        "• <code>/impostazioni</code> - Gestisci le preferenze di notifica (es. avvisi generali CdS)\n"
-        "• <code>/check</code> - Forza un controllo immediato di nuovi avvisi sul sito\n"
-        "• <code>/stop</code> - Disattiva la ricezione delle notifiche automatiche\n"
-        "• <code>/help</code> - Mostra questo messaggio di aiuto\n\n"
-        "🔍 <b>Come funziona il monitoraggio:</b>\n"
-        "Il bot controlla periodicamente (ogni 10 minuti) la sezione avvisi del sito ufficiale DMI UniCT. "
-        "Quando un professore del Canale F-N pubblica un nuovo avviso, o quando viene pubblicato un avviso "
-        "con riferimento al Canale F-N, il bot te lo invia all'istante qui in privato!\n\n"
-        "Sito web di riferimento: <a href=\"https://web.dmi.unict.it/corsi/l-31\">DMI UniCT L-31</a>"
+        "ℹ️ <b>Comandi disponibili:</b>\n\n"
+        "• <code>/start</code> — Avvia o riattiva il bot\n"
+        "• <code>/avvisi</code> — Avvisi aggiornati F-N (pulisce la chat)\n"
+        "• <code>/orario</code> — Orario lezioni con commento in tempo reale\n"
+        "• <code>/docenti</code> — Lista docenti del Canale F-N\n"
+        "• <code>/impostazioni</code> — Attiva/disattiva avvisi generali CdS\n"
+        "• <code>/check</code> — Controlla subito nuovi avvisi\n"
+        "• <code>/stop</code> — Disattiva notifiche automatiche\n\n"
+        "🔍 Il bot controlla ogni 10 minuti il sito DMI UniCT e ti avvisa subito!\n\n"
+        "🌐 <a href=\"https://web.dmi.unict.it/corsi/l-31\">DMI UniCT L-31</a>"
     )
 
     await update.message.reply_text(
@@ -276,35 +364,136 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 
+# ─────────────────────────────────────────────
+#  ADMIN COMMANDS
+# ─────────────────────────────────────────────
+
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin only: /broadcast <messaggio> — Sends a message to all active users."""
+    chat_id = update.effective_chat.id
+
+    if not is_admin(chat_id):
+        await update.message.reply_text("⛔ Comando riservato all'amministratore.")
+        return
+
+    if update.message.reply_to_message:
+        raw_text = update.message.reply_to_message.text_html or update.message.reply_to_message.text or ""
+        broadcast_msg = f"📣 <b>Comunicazione dal gestore del bot:</b>\n\n{raw_text}"
+    elif context.args:
+        message_text = " ".join(context.args)
+        broadcast_msg = (
+            f"📣 <b>Comunicazione dal gestore del bot:</b>\n\n"
+            f"{notifier.escape_html(message_text)}"
+        )
+    else:
+        await update.message.reply_text(
+            "📣 Utilizzo:\n"
+            "• <code>/broadcast Il tuo messaggio qui</code>\n"
+            "• Oppure rispondi a un messaggio con <code>/broadcast</code> per inoltrarlo a tutti.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    active_users = database.get_all_active_users(config.DB_PATH)
+    sent = 0
+    failed = 0
+
+    status_msg = await update.message.reply_text(
+        f"📤 Invio in corso a {len(active_users)} utenti...",
+    )
+
+    for user in active_users:
+        try:
+            await context.bot.send_message(
+                chat_id=user["chat_id"],
+                text=broadcast_msg,
+                parse_mode=ParseMode.HTML
+            )
+            sent += 1
+        except Forbidden:
+            database.set_user_active(user["chat_id"], False, config.DB_PATH)
+            failed += 1
+        except Exception as e:
+            logger.error(f"Broadcast error per {user['chat_id']}: {e}")
+            failed += 1
+
+    await status_msg.edit_text(
+        f"✅ <b>Broadcast completato!</b>\n\n"
+        f"• Inviato a: <b>{sent}</b> utenti\n"
+        f"• Falliti/bloccati: <b>{failed}</b>",
+        parse_mode=ParseMode.HTML
+    )
+
+
+async def iscritti_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin only: /iscritti — Shows count of active subscribers."""
+    chat_id = update.effective_chat.id
+
+    if not is_admin(chat_id):
+        await update.message.reply_text("⛔ Comando riservato all'amministratore.")
+        return
+
+    count = database.count_active_users(config.DB_PATH)
+    all_users = database.get_all_active_users(config.DB_PATH)
+
+    # Build a short list of users
+    users_list = ""
+    for u in all_users[:20]:
+        name = u.get("first_name") or "?"
+        username = f"@{u['username']}" if u.get("username") else "no username"
+        users_list += f"\n  • {notifier.escape_html(name)} ({username}) — <code>{u['chat_id']}</code>"
+
+    extra = f"\n  <i>...e altri {count - 20}</i>" if count > 20 else ""
+
+    await update.message.reply_text(
+        f"👥 <b>Utenti iscritti attivi: {count}</b>\n{users_list}{extra}",
+        parse_mode=ParseMode.HTML
+    )
+
+
+# ─────────────────────────────────────────────
+#  CALLBACK HANDLER
+# ─────────────────────────────────────────────
+
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles inline button clicks."""
+    """Handles all inline button clicks."""
     query = update.callback_query
     await query.answer()
 
     data = query.data
     chat_id = update.effective_chat.id
 
-    if data == "btn_avvisi":
-        # Call avvisi logic
+    if data in ("btn_avvisi", "btn_avvisi_refresh"):
+        # Delete the message with the button before refreshing
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
         user_data = database.get_user(chat_id, config.DB_PATH)
         include_cds = bool(user_data.get("include_cds", 0)) if user_data else False
-        notices = scraper.fetch_all_fn_notices(max_pages=3, include_cds_general=include_cds)
-
-        if not notices:
-            await query.message.reply_text("📭 Al momento non ci sono avvisi recenti per il Canale F-N.")
-            return
-
-        await query.message.reply_text(
-            f"📢 <b>Trovati {len(notices[:5])} avvisi recenti per il Canale F-N:</b>",
-            parse_mode=ParseMode.HTML
+        await show_avvisi(
+            bot=context.bot,
+            chat_id=chat_id,
+            include_cds=include_cds,
+            reply_target=None
         )
-        for n in notices[:5]:
-            msg = notifier.format_notice_message(n, is_alert=False)
-            await query.message.reply_text(
-                msg,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True
-            )
+
+    elif data == "btn_orario":
+        msg = schedule_fn.get_orario_message()
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Aggiorna orario", callback_data="btn_orario")],
+            [InlineKeyboardButton("« Menu principale", callback_data="btn_menu")],
+        ])
+        try:
+            await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        except BadRequest:
+            # Message unchanged (same time, same lesson) — ignore
+            pass
+        try:
+            await query.answer("⏱️ Orario aggiornato!")
+        except Exception:
+            pass
 
     elif data == "btn_docenti":
         profs = scraper.get_fn_professors()
@@ -318,21 +507,22 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             else:
                 text += f"🔹 <b>Prof. {clean_name}</b>\n{notifier.escape_html(courses_str)}\n\n"
 
-        await query.message.reply_text(
+        await query.message.edit_text(
             text,
             parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Menu principale", callback_data="btn_menu")]]),
             disable_web_page_preview=True
         )
 
     elif data == "btn_settings":
         user_data = database.get_user(chat_id, config.DB_PATH)
         include_cds = bool(user_data.get("include_cds", 0)) if user_data else False
-        cds_desc = "Attiva (ricevi anche gli avvisi generali del CdS L-31)" if include_cds else "Disattivata (solo avvisi inerenti a docenti e canale F-N)"
+        cds_desc = "🟢 ATTIVI" if include_cds else "🔴 DISATTIVATI"
         text = (
             "⚙️ <b>Impostazioni Notifiche:</b>\n\n"
             "🟢 <b>Avvisi Docenti Canale F-N:</b> SEMPRE ATTIVI\n"
             f"🔵 <b>Avvisi Generali CdS L-31:</b> {cds_desc}\n\n"
-            "Premi il pulsante per attivare/disattivare gli avvisi generali del Corso di Studi:"
+            "Con gli avvisi CdS attivi ricevi anche: orari, appelli riservati, test d'ingresso, ecc."
         )
         await query.message.edit_text(
             text,
@@ -342,12 +532,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     elif data == "toggle_cds":
         new_state = database.toggle_user_cds(chat_id, config.DB_PATH)
-        cds_desc = "Attiva (ricevi anche gli avvisi generali del CdS L-31)" if new_state else "Disattivata (solo avvisi inerenti a docenti e canale F-N)"
+        cds_desc = "🟢 ATTIVI" if new_state else "🔴 DISATTIVATI"
         text = (
-            "⚙️ <b>Impostazioni Aggiornate!</b>\n\n"
+            "⚙️ <b>Impostazioni aggiornate!</b>\n\n"
             "🟢 <b>Avvisi Docenti Canale F-N:</b> SEMPRE ATTIVI\n"
-            f"🔵 <b>Avvisi Generali CdS L-31:</b> {cds_desc}\n\n"
-            "Premi il pulsante per cambiare impostazione:"
+            f"🔵 <b>Avvisi Generali CdS L-31:</b> {cds_desc}"
         )
         await query.message.edit_text(
             text,
@@ -357,20 +546,21 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     elif data == "btn_menu":
         await query.message.edit_text(
-            "📋 <b>Menu Principale Bot Avvisi DMI (Canale F-N):</b>",
+            "📋 <b>Menu principale — Bot Avvisi DMI (Canale F-N)</b>\n\nCosa vuoi fare?",
             parse_mode=ParseMode.HTML,
             reply_markup=get_main_keyboard()
         )
 
-    elif data == "btn_help":
-        await help_command(update, context)
 
+# ─────────────────────────────────────────────
+#  MAIN
+# ─────────────────────────────────────────────
 
 def main() -> None:
     """Initializes and runs the bot."""
     if not config.BOT_TOKEN or config.BOT_TOKEN == "IL_TUO_TOKEN_TELEGRAM_QUI":
         print("\n" + "=" * 65)
-        print("❌ ERRORE: TELEGRAM_BOT_TOKEN non configurato!")
+        print("ERRORE: TELEGRAM_BOT_TOKEN non configurato!")
         print("Apri il file '.env' e inserisci il token ottenuto da @BotFather.")
         print("Esempio: TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz")
         print("=" * 65 + "\n")
@@ -379,40 +569,47 @@ def main() -> None:
     # Initialize SQLite database
     database.init_db(config.DB_PATH)
 
-    # Seed initial existing notices so they don't trigger mass alerts upon initial launch
-    logger.info("Verifica seed avvisi storici iniziali...")
+    # Seed initial existing notices to avoid spam on startup
+    logger.info("Seed avvisi storici iniziali...")
     try:
         initial_notices = scraper.fetch_all_fn_notices(max_pages=2, include_cds_general=True)
         seeded = database.seed_initial_notices(initial_notices, config.DB_PATH)
-        logger.info(f"Seed completato: {seeded} avvisi registrati nel database.")
+        logger.info(f"Seed completato: {seeded} avvisi registrati.")
     except Exception as e:
-        logger.error(f"Errore durante il seed iniziale degli avvisi: {e}")
+        logger.error(f"Errore seed iniziale: {e}")
 
     # Build PTB Application
     app = ApplicationBuilder().token(config.BOT_TOKEN).build()
 
-    # Register handlers
+    # Register command handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("avvisi", avvisi_command))
+    app.add_handler(CommandHandler("orario", orario_command))
     app.add_handler(CommandHandler("docenti", docenti_command))
     app.add_handler(CommandHandler("impostazioni", impostazioni_command))
     app.add_handler(CommandHandler("check", check_command))
     app.add_handler(CommandHandler("stop", stop_command))
     app.add_handler(CommandHandler("help", help_command))
+
+    # Admin-only handlers
+    app.add_handler(CommandHandler("broadcast", broadcast_command))
+    app.add_handler(CommandHandler("iscritti", iscritti_command))
+
+    # Inline button handler
     app.add_handler(CallbackQueryHandler(callback_handler))
 
-    # Add periodic background checking job
+    # Periodic background job
     if app.job_queue:
-        logger.info(f"Configuro JobQueue: controllo ogni {config.CHECK_INTERVAL_SECONDS} secondi.")
+        logger.info(f"JobQueue attivo: controllo ogni {config.CHECK_INTERVAL_SECONDS}s.")
         app.job_queue.run_repeating(
             notifier.check_and_notify_job,
             interval=config.CHECK_INTERVAL_SECONDS,
-            first=30  # first check 30 seconds after startup
+            first=30
         )
     else:
-        logger.warning("JobQueue non disponibile! Le notifiche automatiche periodiche non partiranno.")
+        logger.warning("JobQueue non disponibile! Notifiche automatiche disabilitate.")
 
-    logger.info("Bot DMI(F-N) avviato con successo. In attesa di messaggi...")
+    logger.info("Bot DMI(F-N) avviato. In attesa di messaggi...")
     app.run_polling()
 
 

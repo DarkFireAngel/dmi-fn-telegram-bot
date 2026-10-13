@@ -5,7 +5,8 @@ WORKDIR /app
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    TZ="Europe/Rome"
 
 # Install dependencies
 COPY requirements.txt .

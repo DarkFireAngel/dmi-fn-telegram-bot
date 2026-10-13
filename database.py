@@ -56,7 +56,50 @@ def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
             )
         """)
 
+        # Track bot message IDs per user for "clean refresh" of /avvisi
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_avvisi_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL
+            )
+        """)
+
         conn.commit()
+
+
+def save_avvisi_message(chat_id: int, message_id: int, db_path: str = DEFAULT_DB_PATH) -> None:
+    """Saves a bot message ID that belongs to a /avvisi session for this user."""
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO user_avvisi_messages (chat_id, message_id) VALUES (?, ?)",
+            (chat_id, message_id)
+        )
+        conn.commit()
+
+
+def pop_avvisi_messages(chat_id: int, db_path: str = DEFAULT_DB_PATH) -> List[int]:
+    """Returns and removes all stored avvisi message IDs for a user."""
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT message_id FROM user_avvisi_messages WHERE chat_id = ?", (chat_id,)
+        )
+        ids = [row["message_id"] for row in cursor.fetchall()]
+        cursor.execute("DELETE FROM user_avvisi_messages WHERE chat_id = ?", (chat_id,))
+        conn.commit()
+        return ids
+
+
+def count_active_users(db_path: str = DEFAULT_DB_PATH) -> int:
+    """Returns the total number of active subscribed users."""
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = 1")
+        return cursor.fetchone()[0]
+
+
 
 
 def register_user(

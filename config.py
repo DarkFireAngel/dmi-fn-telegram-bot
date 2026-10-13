@@ -25,6 +25,14 @@ SCAN_MAX_PAGES = int(os.getenv("SCAN_MAX_PAGES", "2"))
 # Database path
 DB_PATH = os.getenv("DB_PATH", str(BASE_DIR / "dmi_bot.db"))
 
-# Optional admin chat ID for error logs or notifications
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "").strip()
-ADMIN_CHAT_ID = int(ADMIN_CHAT_ID) if ADMIN_CHAT_ID.isdigit() else None
+# Optional admin chat ID for broadcasts, stats, and management
+ADMIN_IDS_RAW = os.getenv("ADMIN_CHAT_ID", "848188619").strip()
+ADMIN_CHAT_IDS = set()
+for _part in ADMIN_IDS_RAW.split(","):
+    _part = _part.strip()
+    if _part.isdigit():
+        ADMIN_CHAT_IDS.add(int(_part))
+if not ADMIN_CHAT_IDS:
+    ADMIN_CHAT_IDS.add(848188619)
+
+ADMIN_CHAT_ID = next(iter(ADMIN_CHAT_IDS), 848188619)

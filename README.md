@@ -1,28 +1,37 @@
 # 🤖 DMI UniCT (L-31 Informatica) - Bot Avvisi Canale F-N
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/DarkFireAngel/dmi-fn-telegram-bot)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new)
 
-
-Un bot Telegram intelligente progettato per monitorare in tempo reale il portale ufficiale del **Dipartimento di Matematica e Informatica (DMI) dell'Università di Catania** per il Corso di Laurea in Informatica (L-31):
+Un bot Telegram intelligente e completo progettato per monitorare in tempo reale il portale ufficiale del **Dipartimento di Matematica e Informatica (DMI) dell'Università di Catania** per il Corso di Laurea in Informatica (L-31):
 🌐 [https://web.dmi.unict.it/corsi/l-31](https://web.dmi.unict.it/corsi/l-31)
 
+Il bot recapita direttamente **in privato su Telegram** tutti gli avvisi pubblicati dai professori del **Canale F-N** e tutti gli avvisi rilevanti per tale canale, con supporto per l'orario delle lezioni, commenti intelligenti in tempo reale, pulizia automatica dei messaggi e strumenti di amministrazione.
 
-Il bot recapita direttamente **in privato su Telegram** tutti gli avvisi pubblicati dai professori del **Canale F-N** e tutti gli avvisi con riferimenti a tale canale.
+---
+
+> [!NOTE]
+> ☁️ **Servizio di Hosting Online: Railway**  
+> Il bot è ospitato online su **[Railway](https://railway.com)** per restare attivo 24 ore su 24, 7 giorni su 7, senza dover tenere il computer acceso.  
+> Ogni modifica pushata su GitHub sul ramo `main` viene automaticamente compilata e deployata da Railway!
 
 ---
 
 ## 🌟 Caratteristiche Principali
 
-- 📬 **Ricezione Automatica in Privato**: Basta inviare `/start` in chat privata con il bot per iscriversi alle notifiche.
-- 👨‍🏫 **Riconoscimento Automatico Docenti Canale F-N**: Il bot scansiona la pagina ufficiale docenti (`/corsi/l-31/docenti`) rilevando i docenti assegnati al Canale F-N (es. *Calvagna, Farinella, Spata, Cavallaro, Cutello, Naselli, Zappala'*).
-- 🎯 **Filtro Intelligente**: Notifica:
-  1. Tutti gli avvisi pubblicati dai professori del Canale F-N.
-  2. Tutti gli avvisi contenenti nel titolo o nel testo riferimenti espliciti a `Canale F-N`, `F - N` o corsi dedicati.
-  3. Esclude avvisi riservati ad altri canali specifici (es. `Canale AE`, `Canale O-Z`).
-- ⚙️ **Filtro Opzionale Avvisi Generali CdS**: Possibilità di ricevere (tramite pulsante o `/impostazioni`) anche gli avvisi generali del Corso di Studi (es. orari, appelli riservati, test d'ingresso).
-- 🕒 **Monitoraggio in Background**: Job automatico programmato (di default ogni 10 minuti) che rileva nuovi avvisi e li invia all'istante a tutti gli utenti iscritti.
-- 💾 **Database SQLite**: Gestione persistente degli iscritti e storico avvisi per prevenire duplicati o notifiche ripetute.
-- 🔘 **Pulsanti Interattivi**: Navigazione intuitiva tramite Inline Keyboard direttamente in chat.
+- 📬 **Ricezione Automatica in Privato**: Basta inviare `/start` in chat privata per iscriversi (senza ricevere spam di vecchi avvisi all'avvio).
+- 📅 **Orario Lezioni F-N con "AI / Smart Time"**: Visualizza l'orario del Canale F-N con messaggi dinamici e commenti spiritosi basati sull'ora e sul giorno corrente (*sei in ritardo, lezione tra poco, buona lezione, weekend, lezioni finite, ecc.*).
+- 🔄 **Aggiornamento Pulito degli Avvisi**: Ad ogni `/avvisi` o pressione del pulsante *"Aggiorna Avvisi"*, la chat viene ripulita dai messaggi precedenti per mantenere la vista ordinata e aggiornata.
+- 👨‍🏫 **Riconoscimento Automatico Docenti Canale F-N**: Il bot analizza la pagina ufficiale dei docenti del CdS L-31 rilevando automaticamente i docenti assegnati al Canale F-N (*Calvagna, Farinella, Spata, Cavallaro, Cutello, Naselli, Zappala'*).
+- 🎯 **Filtro Intelligente**:
+  1. Notifica tutti gli avvisi pubblicati dai docenti del Canale F-N.
+  2. Notifica tutti gli avvisi con citazione esplicita del `Canale F-N`.
+  3. Esclude avvisi riservati ad altri canali (es. `Canale AE`, `Canale O-Z`).
+- ⚙️ **Filtro Opzionale Avvisi Generali CdS**: Ricezione opzionale degli avvisi generali del CdS L-31 (orari, appelli riservati, test d'ingresso, ecc.).
+- 👑 **Funzioni Admin Riservate**:
+  - `/broadcast <testo>`: Per inviare una comunicazione a tutti gli iscritti al bot.
+  - `/iscritti`: Per consultare il numero totale e la lista degli utenti attivi.
+- 🕒 **Monitoraggio in Background**: Job programmato ogni 10 minuti per verificare nuovi avvisi sul portale DMI.
+- 💾 **Database SQLite**: Gestione degli iscritti, preferenze e tracciamento messaggi.
 
 ---
 
@@ -30,62 +39,19 @@ Il bot recapita direttamente **in privato su Telegram** tutti gli avvisi pubblic
 
 ```text
 DMI(F-N)infobot/
-├── bot.py             # Entrypoint principale del Bot Telegram con gestione comandi e bottoni
-├── scraper.py         # Motore di web scraping per docenti e avvisi DMI UniCT
+├── bot.py             # Entrypoint principale del Bot Telegram (comandi, tastiere, admin)
+├── schedule_fn.py     # Modulo orario lezioni F-N con commenti dinamici sull'ora
+├── scraper.py         # Web scraping per docenti e avvisi DMI UniCT
 ├── notifier.py        # Formattazione messaggi HTML e broadcasting agli utenti
-├── database.py        # Gestione database SQLite (utenti, preferenze, avvisi visti)
-├── config.py          # Caricamento configurazioni da file .env
-├── requirements.txt   # Dipendenze Python (python-telegram-bot, bs4, python-dotenv, ecc.)
-├── test_suite.py      # Test automatici per validare scraper, database e notifiche
-├── .env.example       # Template del file di configurazione
-└── .env               # File con il token Telegram e le impostazioni locali
-```
-
----
-
-## 🚀 Guida all'Installazione e Configurazione
-
-### 1. Requisiti
-- **Python 3.10+** (consigliato Python 3.11, 3.12 o 3.13)
-- Le dipendenze già installate tramite:
-  ```bash
-  pip install -r requirements.txt
-  ```
-
-### 2. Creare il Bot su Telegram e ottenere il Token
-1. Apri Telegram e cerca [@BotFather](https://t.me/BotFather).
-2. Avvia la chat e invia il comando:
-   ```text
-   /newbot
-   ```
-3. Scegli un nome per il tuo bot (es. `DMI Info F-N Bot`).
-4. Scegli uno username univoco che finisca con `bot` (es. `dmi_fn_unict_bot`).
-5. `@BotFather` ti invierà il **token HTTP API** (una stringa del tipo `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`).
-
-### 3. Configurare il file `.env`
-Apri il file `.env` nella cartella del progetto e inserisci il token appena ottenuto:
-
-```env
-TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
-CHECK_INTERVAL_SECONDS=600
-SCAN_MAX_PAGES=2
-DB_PATH=dmi_bot.db
-```
-
-- `CHECK_INTERVAL_SECONDS`: Intervallo in secondi tra ogni controllo automatico (600 = ogni 10 minuti).
-- `SCAN_MAX_PAGES`: Numero di pagine del portale DMI da analizzare (default 2 pagine).
-
-### 4. Avviare il Bot
-Esegui il bot con:
-```bash
-python bot.py
-```
-
-Vedrai comparire nella console:
-```text
-Verifica seed avvisi storici iniziali...
-Configuro JobQueue: controllo ogni 600 secondi.
-Bot DMI(F-N) avviato con successo. In attesa di messaggi...
+├── database.py        # Database SQLite (utenti, preferenze, avvisi visti, message tracking)
+├── config.py          # Configurazione caricata da variabili d'ambiente / .env
+├── requirements.txt   # Dipendenze Python (python-telegram-bot, bs4, tzdata, ecc.)
+├── test_suite.py      # Test automatici per verificare tutte le funzionalità
+├── railway.json       # Configurazione del deploy per Railway
+├── Dockerfile         # Immagine Docker con supporto timezone Europe/Rome
+├── Procfile           # Definizione processo worker per cloud hosting
+├── .env.example       # Template del file delle variabili d'ambiente
+└── .env               # File con il token Telegram e le chiavi locali (non committato)
 ```
 
 ---
@@ -94,26 +60,61 @@ Bot DMI(F-N) avviato con successo. In attesa di messaggi...
 
 | Comando | Descrizione |
 |---|---|
-| `/start` | Registra l'utente per le notifiche automatiche, invia il messaggio di benvenuto e mostra subito gli ultimi avvisi rilevati. |
-| `/avvisi` | Mostra su richiesta gli ultimi avvisi pubblicati per il Canale F-N. |
-| `/docenti` | Mostra la lista dei docenti e dei relativi corsi del Canale F-N con link al profilo DMI. |
-| `/impostazioni` | Permette di attivare/disattivare la ricezione degli avvisi generali del CdS L-31. |
-| `/check` | Forza un controllo immediato sul sito DMI per verificare la presenza di nuovi avvisi. |
+| `/start` | Registra l'utente alle notifiche (senza spam) e apre il menu con i pulsanti. |
+| `/avvisi` | Pulisce la chat precedente e mostra gli avvisi recenti del Canale F-N. |
+| `/orario` | Mostra l'orario delle lezioni del Canale F-N con commento dinamico basato sull'orario. |
+| `/docenti` | Mostra l'elenco dei docenti del Canale F-N e i relativi insegnamenti. |
+| `/impostazioni` | Permette di attivare/disattivare gli avvisi generali del CdS L-31. |
+| `/check` | Forza un controllo manuale immediato per nuovi avvisi. |
 | `/stop` | Disattiva le notifiche automatiche (riattivabili in qualunque momento con `/start`). |
-| `/help` | Mostra la guida completa all'uso del bot. |
+| `/help` | Mostra la guida all'uso del bot. |
+| `/broadcast <testo>` | 👑 *(Solo Admin)* Invia un messaggio a tutti gli iscritti al bot. |
+| `/iscritti` | 👑 *(Solo Admin)* Mostra il numero e l'elenco degli iscritti attivi. |
+
+---
+
+## ☁️ Deploy su Railway (Hosting 24/7)
+
+Il bot è configurato per funzionare ininterrottamente su **Railway**:
+
+1. Accedi alla dashboard di [Railway](https://railway.com/dashboard).
+2. Seleziona il progetto `dmi-fn-telegram-bot` (collegato alla repo GitHub `DarkFireAngel/dmi-fn-telegram-bot`).
+3. Nella scheda **Variables**, assicurati che siano impostate:
+   - `TELEGRAM_BOT_TOKEN`: Il token del tuo bot fornito da [@BotFather](https://t.me/BotFather).
+   - `ADMIN_CHAT_ID`: Il tuo ID Telegram (es. `848188619`) per i comandi admin `/broadcast` e `/iscritti`.
+   - `TZ`: `Europe/Rome` (già impostato anche nel Dockerfile).
+4. Ogni `git push` sul repository attiva automaticamente una nuova build e il deploy su Railway.
+
+---
+
+## 💻 Esecuzione in Locale
+
+### 1. Installazione dipendenze
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Configurazione `.env`
+Crea o modifica il file `.env`:
+```env
+TELEGRAM_BOT_TOKEN=il_tuo_token_qui
+CHECK_INTERVAL_SECONDS=600
+SCAN_MAX_PAGES=2
+DB_PATH=dmi_bot.db
+ADMIN_CHAT_ID=848188619
+```
+
+### 3. Avvio
+```bash
+python bot.py
+```
 
 ---
 
 ## 🧪 Esecuzione dei Test Automatici
 
-Per verificare la corretta connessione al sito del DMI, il funzionamento dello scraper e del database SQLite, puoi eseguire la suite di test:
+Per verificare il corretto funzionamento dello scraper, del calcolo dell'orario e del database:
 
 ```bash
 python test_suite.py
 ```
-
-Tutti i test verificheranno:
-- Il parsing della tabella docenti Canale F-N dal vivo.
-- Il parsing delle schede avvisi dal portale DMI.
-- Il ciclo di vita degli utenti e delle preferenze nel database SQLite.
-- La corretta formattazione e sanitizzazione HTML dei messaggi per Telegram.
