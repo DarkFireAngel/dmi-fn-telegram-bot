@@ -38,10 +38,17 @@ def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
                 first_name TEXT,
                 is_active INTEGER DEFAULT 1,
                 include_cds INTEGER DEFAULT 0,
+                year_of_study INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        # Migration: add year_of_study if existing DB didn't have it
+        cursor.execute("PRAGMA table_info(users)")
+        existing_cols = [c[1] for c in cursor.fetchall()]
+        if "year_of_study" not in existing_cols:
+            cursor.execute("ALTER TABLE users ADD COLUMN year_of_study INTEGER DEFAULT 1")
 
         # Seen notices table
         cursor.execute("""
@@ -163,6 +170,28 @@ def toggle_user_cds(chat_id: int, db_path: str = DEFAULT_DB_PATH) -> bool:
         """, (new_val, now, chat_id))
         conn.commit()
         return bool(new_val)
+
+
+def set_user_year(chat_id: int, year: int, db_path: str = DEFAULT_DB_PATH) -> None:
+    """Sets user's year of study (1, 2, or 3)."""
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        now = datetime.datetime.now().isoformat()
+        cursor.execute("""
+            UPDATE users SET year_of_study = ?, updated_at = ? WHERE chat_id = ?
+        """, (year, now, chat_id))
+        conn.commit()
+
+
+def get_user_year(chat_id: int, db_path: str = DEFAULT_DB_PATH) -> int:
+    """Gets user's chosen year of study (default 1)."""
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT year_of_study FROM users WHERE chat_id = ?", (chat_id,))
+        row = cursor.fetchone()
+        if row and row["year_of_study"]:
+            return int(row["year_of_study"])
+        return 1
 
 
 def get_user(chat_id: int, db_path: str = DEFAULT_DB_PATH) -> Optional[Dict[str, Any]]:

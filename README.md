@@ -18,9 +18,10 @@ Il bot recapita direttamente **in privato su Telegram** tutti gli avvisi pubblic
 
 ## 🌟 Caratteristiche Principali
 
-- 📬 **Ricezione Automatica in Privato**: Basta inviare `/start` in chat privata per iscriversi (senza ricevere spam di vecchi avvisi all'avvio).
-- 📅 **Orario Lezioni F-N con "AI / Smart Time"**: Visualizza l'orario del Canale F-N con messaggi dinamici e commenti spiritosi basati sull'ora e sul giorno corrente (*sei in ritardo, lezione tra poco, buona lezione, weekend, lezioni finite, ecc.*).
-- 🔄 **Aggiornamento Pulito degli Avvisi**: Ad ogni `/avvisi` o pressione del pulsante *"Aggiorna Avvisi"*, la chat viene ripulita dai messaggi precedenti per mantenere la vista ordinata e aggiornata.
+- 📬 **Ricezione Automatica in Privato**: Basta inviare `/start` in chat privata per iscriversi (senza ricevere spam di vecchi avvisi all'avvio). Non appena un docente F-N pubblica un nuovo avviso sul sito DMI, il bot te lo invia subito in chat!
+- 🎓 **Scelta Anno di Corso (1°, 2° o 3° Anno)**: Nelle `/impostazioni` puoi impostare il tuo anno di corso (1° Anno impostato di base). L'orario e le notifiche si adattano automaticamente agli insegnamenti ufficiali del tuo anno!
+- 📅 **Orario Lezioni con "AI / Smart Time"**: Visualizza l'orario del tuo anno con messaggi dinamici e commenti spiritosi basati sull'ora e sul giorno corrente (*sei in ritardo, lezione tra poco, buona lezione, weekend, lezioni finite, ecc.*). Puoi anche cambiare anno al volo direttamente dai pulsanti dell'orario.
+- 🔄 **Chat Sempre Pulita**: Ad ogni `/avvisi`, `/orario` o quando torni al **Menu principale**, la chat viene automaticamente ripulita dai messaggi precedenti per mantenere una vista sempre ordinata.
 - 👨‍🏫 **Riconoscimento Automatico Docenti Canale F-N**: Il bot analizza la pagina ufficiale dei docenti del CdS L-31 rilevando automaticamente i docenti assegnati al Canale F-N (*Calvagna, Farinella, Spata, Cavallaro, Cutello, Naselli, Zappala'*).
 - 🎯 **Filtro Intelligente**:
   1. Notifica tutti gli avvisi pubblicati dai docenti del Canale F-N.
@@ -30,8 +31,8 @@ Il bot recapita direttamente **in privato su Telegram** tutti gli avvisi pubblic
 - 👑 **Funzioni Admin Riservate**:
   - `/broadcast <testo>`: Per inviare una comunicazione a tutti gli iscritti al bot.
   - `/iscritti`: Per consultare il numero totale e la lista degli utenti attivi.
-- 🕒 **Monitoraggio in Background**: Job programmato ogni 10 minuti per verificare nuovi avvisi sul portale DMI.
-- 💾 **Database SQLite**: Gestione degli iscritti, preferenze e tracciamento messaggi.
+- 🕒 **Monitoraggio Continuo in Background**: Job programmato ogni 5 minuti per rilevare subito qualsiasi nuovo avviso sul portale DMI.
+- 💾 **Database SQLite**: Gestione degli iscritti, anno di studio, preferenze e tracciamento messaggi.
 
 ---
 

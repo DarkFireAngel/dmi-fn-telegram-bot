@@ -79,12 +79,37 @@ def get_avvisi_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 
-def get_settings_keyboard(include_cds: bool) -> InlineKeyboardMarkup:
-    """Returns settings inline keyboard with toggle buttons."""
+def get_settings_keyboard(include_cds: bool, year: int = 1) -> InlineKeyboardMarkup:
+    """Returns settings inline keyboard with year selection and toggle buttons."""
     cds_label = "✅ Avvisi CdS L-31: ATTIVI" if include_cds else "❌ Avvisi CdS L-31: DISATTIVATI"
+    y1 = "1° Anno 🔘" if year == 1 else "1° Anno"
+    y2 = "2° Anno 🔘" if year == 2 else "2° Anno"
+    y3 = "3° Anno 🔘" if year == 3 else "3° Anno"
     keyboard = [
+        [
+            InlineKeyboardButton(y1, callback_data="set_year_1"),
+            InlineKeyboardButton(y2, callback_data="set_year_2"),
+            InlineKeyboardButton(y3, callback_data="set_year_3"),
+        ],
         [InlineKeyboardButton(cds_label, callback_data="toggle_cds")],
         [InlineKeyboardButton("« Torna al Menu", callback_data="btn_menu")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def get_orario_keyboard(year: int = 1) -> InlineKeyboardMarkup:
+    """Returns timetable keyboard with quick year switch, refresh and menu button."""
+    y1 = "1° Anno 📌" if year == 1 else "1° Anno"
+    y2 = "2° Anno 📌" if year == 2 else "2° Anno"
+    y3 = "3° Anno 📌" if year == 3 else "3° Anno"
+    keyboard = [
+        [
+            InlineKeyboardButton(y1, callback_data="view_year_1"),
+            InlineKeyboardButton(y2, callback_data="view_year_2"),
+            InlineKeyboardButton(y3, callback_data="view_year_3"),
+        ],
+        [InlineKeyboardButton("🔄 Aggiorna orario", callback_data=f"btn_orario_{year}")],
+        [InlineKeyboardButton("« Menu principale", callback_data="btn_menu")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -201,6 +226,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         return
 
+    # Delete old messages for chat cleanliness
+    await delete_old_avvisi(context.bot, chat.id)
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+
     is_new = database.register_user(
         chat_id=chat.id,
         username=user.username,
@@ -216,18 +248,20 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     welcome_text = (
         f"👋 <b>Ciao {notifier.escape_html(user.first_name)}!</b>\n\n"
         f"{status_txt}\n\n"
-        f"Riceverai in automatico tutti gli <b>avvisi del Canale F-N</b> "
-        f"del CdL Informatica L-31 (DMI UniCT) appena vengono pubblicati.\n\n"
+        f"Riceverai in automatico tutti i <b>nuovi avvisi del Canale F-N</b> "
+        f"del CdL Informatica L-31 (DMI UniCT) appena vengono pubblicati dai docenti.\n\n"
         f"🌐 <a href=\"https://web.dmi.unict.it/corsi/l-31\">web.dmi.unict.it/corsi/l-31</a>\n\n"
         f"Scegli un'opzione qui sotto:"
     )
 
-    await update.message.reply_text(
-        welcome_text,
+    m = await context.bot.send_message(
+        chat_id=chat.id,
+        text=welcome_text,
         parse_mode=ParseMode.HTML,
         reply_markup=get_main_keyboard(),
         disable_web_page_preview=True
     )
+    database.save_avvisi_message(chat.id, m.message_id, config.DB_PATH)
 
 
 async def avvisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -252,25 +286,38 @@ async def avvisi_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def orario_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles /orario. Shows F-N timetable with smart time-based comment."""
-    msg = schedule_fn.get_orario_message()
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 Aggiorna orario", callback_data="btn_orario")],
-        [InlineKeyboardButton("« Menu principale", callback_data="btn_menu")],
-    ])
-    await update.message.reply_text(
-        msg,
+    chat_id = update.effective_chat.id
+    await delete_old_avvisi(context.bot, chat_id)
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+
+    year = database.get_user_year(chat_id, config.DB_PATH)
+    msg = schedule_fn.get_orario_message(year=year)
+    m = await context.bot.send_message(
+        chat_id=chat_id,
+        text=msg,
         parse_mode=ParseMode.HTML,
-        reply_markup=keyboard
+        reply_markup=get_orario_keyboard(year)
     )
+    database.save_avvisi_message(chat_id, m.message_id, config.DB_PATH)
 
 
 async def docenti_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles /docenti. Lists all F-N professors."""
+    chat_id = update.effective_chat.id
+    await delete_old_avvisi(context.bot, chat_id)
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+
     profs = scraper.get_fn_professors()
 
     text = (
         "👨‍🏫 <b>Docenti Canale F-N — L-31 Informatica:</b>\n\n"
-        "Avvisi di questi docenti vengono monitorati automaticamente:\n\n"
+        "Gli avvisi di questi docenti vengono monitorati e inviati automaticamente in chat:\n\n"
     )
 
     for name, data in profs.items():
@@ -288,34 +335,47 @@ async def docenti_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "🔗 <a href=\"https://web.dmi.unict.it/corsi/l-31/docenti\">Docenti CdL Informatica L-31</a>"
     )
 
-    await update.message.reply_text(
-        text,
+    m = await context.bot.send_message(
+        chat_id=chat_id,
+        text=text,
         parse_mode=ParseMode.HTML,
-        reply_markup=get_main_keyboard(),
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Menu principale", callback_data="btn_menu")]]),
         disable_web_page_preview=True
     )
+    database.save_avvisi_message(chat_id, m.message_id, config.DB_PATH)
 
 
 async def impostazioni_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles /impostazioni."""
     chat_id = update.effective_chat.id
-    user_data = database.get_user(chat_id, config.DB_PATH)
-    include_cds = bool(user_data.get("include_cds", 0)) if user_data else False
+    await delete_old_avvisi(context.bot, chat_id)
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+
+    user_data = database.get_user(chat_id, config.DB_PATH) or {}
+    include_cds = bool(user_data.get("include_cds", 0))
+    year = database.get_user_year(chat_id, config.DB_PATH)
 
     cds_desc = "🟢 ATTIVI" if include_cds else "🔴 DISATTIVATI"
 
     text = (
-        "⚙️ <b>Impostazioni Notifiche:</b>\n\n"
+        "⚙️ <b>Impostazioni Notifiche & Orario:</b>\n\n"
+        f"🎓 <b>Anno di Corso Selezionato:</b> <b>{year}° Anno</b>\n"
+        "<i>(L'orario e le notifiche si adattano automaticamente al tuo anno)</i>\n\n"
         "🟢 <b>Avvisi Docenti Canale F-N:</b> SEMPRE ATTIVI\n"
         f"🔵 <b>Avvisi Generali CdS L-31:</b> {cds_desc}\n\n"
-        "Con gli avvisi CdS attivi ricevi anche: orari, appelli riservati, test d'ingresso, ecc."
+        "💡 <i>Scegli il tuo anno di corso o attiva gli avvisi generali:</i>"
     )
 
-    await update.message.reply_text(
-        text,
+    m = await context.bot.send_message(
+        chat_id=chat_id,
+        text=text,
         parse_mode=ParseMode.HTML,
-        reply_markup=get_settings_keyboard(include_cds)
+        reply_markup=get_settings_keyboard(include_cds, year)
     )
+    database.save_avvisi_message(chat_id, m.message_id, config.DB_PATH)
 
 
 async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -479,19 +539,53 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             reply_target=None
         )
 
-    elif data == "btn_orario":
-        msg = schedule_fn.get_orario_message()
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Aggiorna orario", callback_data="btn_orario")],
-            [InlineKeyboardButton("« Menu principale", callback_data="btn_menu")],
-        ])
+    elif data == "btn_orario" or data.startswith("btn_orario_"):
+        year = database.get_user_year(chat_id, config.DB_PATH)
+        msg = schedule_fn.get_orario_message(year=year)
         try:
-            await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+            await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=get_orario_keyboard(year))
         except BadRequest:
             # Message unchanged (same time, same lesson) — ignore
             pass
         try:
             await query.answer("⏱️ Orario aggiornato!")
+        except Exception:
+            pass
+
+    elif data.startswith("view_year_"):
+        v_year = int(data.split("_")[-1])
+        database.set_user_year(chat_id, v_year, config.DB_PATH)
+        msg = schedule_fn.get_orario_message(year=v_year)
+        try:
+            await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=get_orario_keyboard(v_year))
+        except BadRequest:
+            pass
+        try:
+            await query.answer(f"📅 Orario {v_year}° Anno")
+        except Exception:
+            pass
+
+    elif data.startswith("set_year_"):
+        new_year = int(data.split("_")[-1])
+        database.set_user_year(chat_id, new_year, config.DB_PATH)
+        user_data = database.get_user(chat_id, config.DB_PATH) or {}
+        include_cds = bool(user_data.get("include_cds", 0))
+        cds_desc = "🟢 ATTIVI" if include_cds else "🔴 DISATTIVATI"
+        text = (
+            "⚙️ <b>Impostazioni Notifiche & Orario:</b>\n\n"
+            f"🎓 <b>Anno di Corso Selezionato:</b> <b>{new_year}° Anno</b>\n"
+            "<i>(L'orario e le notifiche si adattano automaticamente al tuo anno)</i>\n\n"
+            "🟢 <b>Avvisi Docenti Canale F-N:</b> SEMPRE ATTIVI\n"
+            f"🔵 <b>Avvisi Generali CdS L-31:</b> {cds_desc}\n\n"
+            "💡 <i>Scegli il tuo anno di corso o attiva gli avvisi generali:</i>"
+        )
+        await query.message.edit_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_settings_keyboard(include_cds, new_year)
+        )
+        try:
+            await query.answer(f"✅ Impostato: {new_year}° Anno!")
         except Exception:
             pass
 
@@ -515,41 +609,57 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
 
     elif data == "btn_settings":
-        user_data = database.get_user(chat_id, config.DB_PATH)
-        include_cds = bool(user_data.get("include_cds", 0)) if user_data else False
+        user_data = database.get_user(chat_id, config.DB_PATH) or {}
+        include_cds = bool(user_data.get("include_cds", 0))
+        year = database.get_user_year(chat_id, config.DB_PATH)
         cds_desc = "🟢 ATTIVI" if include_cds else "🔴 DISATTIVATI"
         text = (
-            "⚙️ <b>Impostazioni Notifiche:</b>\n\n"
+            "⚙️ <b>Impostazioni Notifiche & Orario:</b>\n\n"
+            f"🎓 <b>Anno di Corso Selezionato:</b> <b>{year}° Anno</b>\n"
+            "<i>(L'orario e le notifiche si adattano automaticamente al tuo anno)</i>\n\n"
             "🟢 <b>Avvisi Docenti Canale F-N:</b> SEMPRE ATTIVI\n"
             f"🔵 <b>Avvisi Generali CdS L-31:</b> {cds_desc}\n\n"
-            "Con gli avvisi CdS attivi ricevi anche: orari, appelli riservati, test d'ingresso, ecc."
+            "💡 <i>Scegli il tuo anno di corso o attiva gli avvisi generali:</i>"
         )
         await query.message.edit_text(
             text,
             parse_mode=ParseMode.HTML,
-            reply_markup=get_settings_keyboard(include_cds)
+            reply_markup=get_settings_keyboard(include_cds, year)
         )
 
     elif data == "toggle_cds":
         new_state = database.toggle_user_cds(chat_id, config.DB_PATH)
+        year = database.get_user_year(chat_id, config.DB_PATH)
         cds_desc = "🟢 ATTIVI" if new_state else "🔴 DISATTIVATI"
         text = (
-            "⚙️ <b>Impostazioni aggiornate!</b>\n\n"
+            "⚙️ <b>Impostazioni Notifiche & Orario:</b>\n\n"
+            f"🎓 <b>Anno di Corso Selezionato:</b> <b>{year}° Anno</b>\n"
+            "<i>(L'orario e le notifiche si adattano automaticamente al tuo anno)</i>\n\n"
             "🟢 <b>Avvisi Docenti Canale F-N:</b> SEMPRE ATTIVI\n"
-            f"🔵 <b>Avvisi Generali CdS L-31:</b> {cds_desc}"
+            f"🔵 <b>Avvisi Generali CdS L-31:</b> {cds_desc}\n\n"
+            "💡 <i>Scegli il tuo anno di corso o attiva gli avvisi generali:</i>"
         )
         await query.message.edit_text(
             text,
             parse_mode=ParseMode.HTML,
-            reply_markup=get_settings_keyboard(new_state)
+            reply_markup=get_settings_keyboard(new_state, year)
         )
 
     elif data == "btn_menu":
-        await query.message.edit_text(
-            "📋 <b>Menu principale — Bot Avvisi DMI (Canale F-N)</b>\n\nCosa vuoi fare?",
+        # Delete old avvisi and previous messages to leave chat sparkling clean
+        await delete_old_avvisi(context.bot, chat_id)
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+        menu_msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text="📋 <b>Menu principale — Bot Avvisi DMI (Canale F-N)</b>\n\nCosa vuoi fare?",
             parse_mode=ParseMode.HTML,
             reply_markup=get_main_keyboard()
         )
+        database.save_avvisi_message(chat_id, menu_msg.message_id, config.DB_PATH)
 
 
 # ─────────────────────────────────────────────
@@ -568,6 +678,10 @@ def main() -> None:
 
     # Initialize SQLite database
     database.init_db(config.DB_PATH)
+
+    # Ensure admin is registered so they always receive alerts
+    if config.ADMIN_CHAT_ID:
+        database.register_user(config.ADMIN_CHAT_ID, username="Angelo", first_name="Angelo", db_path=config.DB_PATH)
 
     # Seed initial existing notices to avoid spam on startup
     logger.info("Seed avvisi storici iniziali...")

@@ -141,18 +141,41 @@ class TestDmiBot(unittest.TestCase):
         database.set_user_active(1, False, self.db_path)
         self.assertEqual(database.count_active_users(self.db_path), 1)
 
+    def test_database_user_year(self):
+        # Default should be 1
+        database.register_user(555, "student", "Student", self.db_path)
+        self.assertEqual(database.get_user_year(555, self.db_path), 1)
+
+        # Set to 2
+        database.set_user_year(555, 2, self.db_path)
+        self.assertEqual(database.get_user_year(555, self.db_path), 2)
+
+        # Set to 3
+        database.set_user_year(555, 3, self.db_path)
+        self.assertEqual(database.get_user_year(555, self.db_path), 3)
+
     def test_schedule_fn_generation(self):
         import schedule_fn
         import datetime
-        # Test Monday 10:00 AM (during Programmazione I)
+        # Test Year 1 Monday 10:00 AM (during Algebra Lineare)
         test_time = datetime.datetime(2026, 10, 12, 10, 0)
-        msg = schedule_fn.get_orario_message(test_time)
-        self.assertIn("Programmazione I", msg)
-        self.assertIn("Orario Canale F-N", msg)
+        msg1 = schedule_fn.get_orario_message(year=1, now=test_time)
+        self.assertIn("1° Anno", msg1)
+        self.assertIn("Algebra Lineare", msg1)
+
+        # Test Year 2
+        msg2 = schedule_fn.get_orario_message(year=2, now=test_time)
+        self.assertIn("2° Anno", msg2)
+        self.assertIn("Algoritmi", msg2)
+
+        # Test Year 3
+        msg3 = schedule_fn.get_orario_message(year=3, now=test_time)
+        self.assertIn("3° Anno", msg3)
+        self.assertIn("Artificial Intelligence", msg3)
 
         # Test Sunday (weekend)
         test_sunday = datetime.datetime(2026, 10, 18, 12, 0)
-        msg_weekend = schedule_fn.get_orario_message(test_sunday)
+        msg_weekend = schedule_fn.get_orario_message(year=1, now=test_sunday)
         self.assertIn("weekend", msg_weekend.lower())
 
 

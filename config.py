@@ -16,8 +16,8 @@ load_dotenv(dotenv_path=BASE_DIR / ".env")
 # Telegram Bot Token (from @BotFather)
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
-# Check interval in seconds for background periodic scraper (default: 600s = 10 minutes)
-CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", "600"))
+# Check interval in seconds for background periodic scraper (default: 300s = 5 minutes)
+CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", "300"))
 
 # Number of pages to scan on avvisi-docente (default: 2)
 SCAN_MAX_PAGES = int(os.getenv("SCAN_MAX_PAGES", "2"))
